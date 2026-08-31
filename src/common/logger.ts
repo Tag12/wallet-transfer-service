@@ -22,9 +22,17 @@ const threshold = LEVELS.indexOf(process.env.LOG_LEVEL ?? 'info');
 function emit(level: string, event: string, fields: LogFields): void {
   if (LEVELS.indexOf(level) < threshold) return;
   const entry = { level, event, time: new Date().toISOString(), ...fields };
+  // stdout stays pure structured JSON (one object per line).
   process.stdout.write(JSON.stringify(entry) + '\n');
   if (logtail) {
-    void logtail.log(event, level, fields);
+    // Betterstack's public dashboard renders only the message string (row
+    // expansion is disabled for anonymous viewers), so inline the structured
+    // fields into the message — e.g. "transfer.applied from=… to=… amount=…".
+    // The fields are still sent as context too, for column/search use.
+    const suffix = Object.entries(fields)
+      .map(([k, v]) => `${k}=${v}`)
+      .join(' ');
+    void logtail.log(suffix ? `${event} ${suffix}` : event, level, fields);
   }
 }
 
