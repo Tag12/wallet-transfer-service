@@ -4,8 +4,13 @@ type LogFields = Record<string, unknown>;
 
 // Ships logs to Betterstack (formerly Logtail) only when a source token is configured
 // (i.e. in the deployed environment) — unset locally/in CI, so dev and tests are unaffected.
+// Modern Betterstack sources have a per-source ingesting host; when LOGTAIL_ENDPOINT is
+// set we target it explicitly, otherwise the client falls back to its default host.
 const logtail = process.env.LOGTAIL_SOURCE_TOKEN
-  ? new Logtail(process.env.LOGTAIL_SOURCE_TOKEN)
+  ? new Logtail(
+      process.env.LOGTAIL_SOURCE_TOKEN,
+      process.env.LOGTAIL_ENDPOINT ? { endpoint: process.env.LOGTAIL_ENDPOINT } : undefined,
+    )
   : undefined;
 
 const LEVELS = ['debug', 'info', 'warn', 'error'];
