@@ -14,7 +14,9 @@ export async function getOrCreateWallet(userId: string, requestId?: string): Pro
   if (inserted.rows[0]) {
     return inserted.rows[0];
   }
-  logger.info('wallet.create_race_lost', { requestId, userId });
+  // No-op create: the wallet already existed. This is the expected idempotent
+  // outcome of POST /accounts (calling twice returns the same wallet), not a
+  // race — so nothing is logged here.
   const existing = await db.query<WalletRow>('SELECT * FROM wallets WHERE user_id = $1', [userId]);
   return existing.rows[0];
 }
@@ -26,7 +28,10 @@ export async function ensureWalletExists(client: PoolClient, userId: string, req
     [userId],
   );
   if (result.rowCount === 0) {
-    logger.info('wallet.create_race_lost', { requestId, userId });
+    // rowCount 0 means the wallet already existed. An ON CONFLICT upsert can't
+    // distinguish a genuine concurrent race-loser from a wallet that was simply
+    // already present, so this is logged at debug (not asserted as a race).
+    logger.debug('wallet.create_skipped', { requestId, userId });
   }
 }
 
