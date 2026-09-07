@@ -43,7 +43,13 @@ CREATE TABLE IF NOT EXISTS transfers (
   UNIQUE (from_user, idempotency_key)
 );
 
-CREATE INDEX IF NOT EXISTS idx_transfers_from_to ON transfers (from_user, to_user);
+-- Serves the daily-cap sum: the sender's committed successful sends in the rolling
+-- 24h window. Partial (status='successful') since only those count toward the cap.
+-- (This is the only index the read paths actually use, besides the PK and the
+-- UNIQUE (from_user, idempotency_key) constraint index — we intentionally don't
+-- keep a (from_user, to_user) index since no query filters on it.)
+CREATE INDEX IF NOT EXISTS idx_transfers_from_created ON transfers (from_user, created_at)
+  WHERE status = 'successful';
 
 -- Seed a system "faucet" wallet with a large balance. The API surface deliberately has
 -- no deposit/mint endpoint (per spec), so this is the only way to get real money into

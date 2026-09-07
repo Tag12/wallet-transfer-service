@@ -6,6 +6,14 @@ import { WalletRow } from '../interfaces/wallet.interface';
 import { ErrorCode } from '../shared/enums/error-code.enum';
 import { logger } from '../common/logger';
 
+// Per-sender rolling-24h send cap (integer paise). Default 5,000.00 (= 500000 paise).
+const DAILY_CAP_PAISE = BigInt(process.env.DAILY_CAP_PAISE ?? '500000');
+// System/treasury accounts exempt from the per-user cap (e.g. the funding faucet,
+// which moves more than the cap in a single transfer). Comma-separated user ids.
+const CAP_EXEMPT = new Set(
+  (process.env.CAP_EXEMPT_USERS ?? 'faucet').split(',').map((s) => s.trim()).filter(Boolean),
+);
+
 export interface CreateTransferResult {
   transferId: string;
   newBalance: string;
@@ -106,6 +114,37 @@ export async function createTransfer(
       );
       logger.info('transfer.rejected.insufficient_funds', { requestId, fromUser, amountPaise, transferId });
       return { outcome: 'rejected', transferId, errorCode: ErrorCode.INSUFFICIENT_FUNDS, errorStatus: 402 };
+    }
+
+    // Daily cap: sum the sender's already-committed successful sends in the rolling
+    // 24h window and reject if this transfer would push them over the cap. This is
+    // race-free without any new lock because we already hold the sender's wallet row
+    // FOR UPDATE above, which serializes all of this sender's concurrent transfers —
+    // so `spent` cannot change between this read and our commit. Strict `>` lets a
+    // transfer that lands exactly on the cap through. System accounts are exempt.
+    if (!CAP_EXEMPT.has(fromUser)) {
+      const spentRes = await client.query<{ spent: string }>(
+        `SELECT COALESCE(SUM(amount_paise), 0)::bigint AS spent
+         FROM transfers
+         WHERE from_user = $1 AND status = 'successful' AND created_at > now() - interval '24 hours'`,
+        [fromUser],
+      );
+      const spent = BigInt(spentRes.rows[0].spent);
+      if (spent + amount > DAILY_CAP_PAISE) {
+        await client.query(
+          'UPDATE transfers SET status = $1, error_code = $2, error_status = $3 WHERE id = $4',
+          ['rejected', ErrorCode.DAILY_CAP_EXCEEDED, 429, transferId],
+        );
+        logger.info('transfer.rejected.daily_cap', {
+          requestId,
+          fromUser,
+          amountPaise,
+          transferId,
+          spent: spent.toString(),
+          cap: DAILY_CAP_PAISE.toString(),
+        });
+        return { outcome: 'rejected', transferId, errorCode: ErrorCode.DAILY_CAP_EXCEEDED, errorStatus: 429 };
+      }
     }
 
     await client.query('UPDATE wallets SET balance_paise = balance_paise - $1 WHERE user_id = $2', [

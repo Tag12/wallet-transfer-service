@@ -32,7 +32,9 @@ router.post('/transfers', auth, asyncHandler(async (req: Request, res: Response)
     return res.status(200).json(response);
   } catch (err: unknown) {
     if (err instanceof AppError) {
-      if (err.code === ErrorCode.INSUFFICIENT_FUNDS) recordTransferOutcome(false);
+      if (err.code === ErrorCode.INSUFFICIENT_FUNDS || err.code === ErrorCode.DAILY_CAP_EXCEEDED) {
+        recordTransferOutcome(false);
+      }
       return res.status(err.status).json({ error: err.code, message: err.code, transfer_id: err.transferId });
     }
     throw err;
